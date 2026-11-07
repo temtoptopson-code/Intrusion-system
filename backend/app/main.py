@@ -49,7 +49,9 @@ def startup():
             db.add(User(email=ADMIN_EMAIL,full_name=ADMIN_NAME,password_hash=hash_password(ADMIN_PASSWORD),role="Super Administrator"));db.commit()
     finally:db.close()
 @app.get("/api/health")
-def health():return {"status":"healthy","timezone":TIMEZONE,"server_time":local(datetime.now(timezone.utc))}
+def health(db:Session=Depends(get_db)):
+    db.execute(select(1))
+    return {"status":"healthy","database":"connected","timezone":TIMEZONE,"server_time":local(datetime.now(timezone.utc))}
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
     u=db.scalar(select(User).where(User.email==data.email.lower()))
@@ -73,6 +75,7 @@ def alerts(limit:int=100,severity:str|None=None,status:str|None=None,db:Session=
 @app.patch("/api/alerts/{aid}")
 def update(aid:int,data:AlertUpdate,db:Session=Depends(get_db),u:User=Depends(current_user)):
     a=db.get(SecurityAlert,aid)
+    if u.role=="Viewer":raise HTTPException(403,"Viewer accounts cannot modify alerts")
     if not a:raise HTTPException(404,"Alert not found")
     if data.status:
         if data.status not in ["New","Acknowledged","Investigating","Resolved"]:raise HTTPException(400,"Invalid status")
