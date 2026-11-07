@@ -153,11 +153,12 @@ def _send_resend_email(recipients, subject, text):
             result = json.loads(response.read().decode("utf-8"))
         return result
     except HTTPError as exc:
+        raw_body = exc.read().decode("utf-8", errors="replace")
         try:
-            error_data = json.loads(exc.read().decode("utf-8"))
-            reason = error_data.get("message") or error_data.get("name") or "Request rejected"
+            error_data = json.loads(raw_body)
+            reason = error_data.get("message") or error_data.get("name") or raw_body[:300]
         except Exception:
-            reason = "Request rejected"
+            reason = raw_body[:300] or "Empty error response"
         raise RuntimeError(f"Resend API returned HTTP {exc.code}: {reason}") from exc
 
 
