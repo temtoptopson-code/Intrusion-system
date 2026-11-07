@@ -60,6 +60,7 @@ def list_ip_rules(db: Session = Depends(get_db), user: User = Depends(current_us
 
 @router.post("/admin/ip-rules")
 def add_ip_rule(data: IPIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    admin(user)
     import ipaddress
     try: ipaddress.ip_address(data.ip_address)
     except ValueError: raise HTTPException(400, "Enter a valid IPv4 or IPv6 address")
@@ -72,6 +73,7 @@ def add_ip_rule(data: IPIn, db: Session = Depends(get_db), user: User = Depends(
 
 @router.delete("/admin/ip-rules/{rule_id}")
 def delete_ip_rule(rule_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    admin(user)
     row = db.get(IPRule, rule_id)
     if not row: raise HTTPException(404, "IP rule not found")
     db.delete(row); db.add(AuditLog(actor=user.email, action="ip_rule_removed", detail=row.ip_address)); db.commit()
