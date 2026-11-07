@@ -26,7 +26,7 @@ services:
       - key: NIDS_TIMEZONE
         value: Africa/Lagos
       - key: CORS_ORIGINS
-        value: https://nids-frontend.onrender.com
+        value: https://nids-frontend-yaew.onrender.com
 
   - type: web
     name: nids-frontend
@@ -36,7 +36,7 @@ services:
     staticPublishPath: ./dist
     envVars:
       - key: VITE_API_URL
-        value: https://nids-api.onrender.com
+        value: https://nids-api-yaew.onrender.com
     routes:
       - type: rewrite
         source: /*
