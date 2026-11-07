@@ -37,5 +37,5 @@ def process_event(db:Session,data:dict):
     db.commit(); db.refresh(event)
     for a in alerts:
         db.refresh(a)
-        notify_security_alert(a)
+        notify_security_alert(a, db)
     return event,alerts

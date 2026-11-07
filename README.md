@@ -58,21 +58,14 @@ The application now includes:
 - Extended analytics for top alert sources, attack categories and destination ports.
 - Downloadable PDF and CSV security reports.
 - Database-aware API health checks.
-- Optional SMTP test messages and high/critical alert notifications.
+- Resend-powered email test messages and High/Critical alert notifications.
+- Super Administrator email-recipient management (add, edit, enable/disable and delete).
 
-### Optional Render environment variables for email
+### Email notifications and recipient management
 
-Configure these as private environment variables on the Render backend service. Do not commit credentials to GitHub.
+Configure `RESEND_API_KEY` and `RESEND_FROM` as private environment variables on the Render backend service. Do not commit credentials to GitHub or expose the API key in frontend code.
 
-| Variable | Purpose |
-|---|---|
-| `SMTP_HOST` | SMTP server hostname |
-| `SMTP_PORT` | SMTP port, normally 587 for STARTTLS |
-| `SMTP_FROM` | SMTP sender/login email |
-| `SMTP_PASSWORD` | SMTP app password or SMTP credential |
-| `SMTP_ALERT_TO` | Recipient for automatic High and Critical alert notifications |
-
-Automatic alert emails are sent only when all four SMTP settings and `SMTP_ALERT_TO` are configured. The in-app test button sends a test message to the signed-in user's email address.
+Open **Notifications** in the dashboard while signed in as a Super Administrator to manage recipient addresses. Recipients are stored in the application database; only active recipients receive automatic High and Critical alert notifications. The existing `ALERT_RECIPIENTS` comma-separated environment variable is imported into the database once on first use so existing destinations remain manageable. The test button sends a test message to the signed-in user's email address.
 
 ### Feature access
 
