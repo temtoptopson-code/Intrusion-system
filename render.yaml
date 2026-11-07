@@ -2,7 +2,7 @@ databases:
   - name: nids-postgres
     databaseName: nids
     user: nids_user
-    plan: basic-256mb
+    plan: free
     region: frankfurt
 
 services:
@@ -37,8 +37,9 @@ services:
       - key: CORS_ORIGINS
         value: https://nids-frontend.onrender.com
 
-  - type: static
+  - type: web
     name: nids-frontend
+    runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
