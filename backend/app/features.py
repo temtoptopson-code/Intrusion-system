@@ -160,7 +160,7 @@ def ensure_legacy_recipients(db: Session):
     marker = db.get(AppSetting, "legacy_alert_recipients_imported")
     if marker:
         return
-    legacy = [value.strip() for value in os.getenv("ALERT_RECIPIENTS", "").split(",") if value.strip()]
+    legacy = list(dict.fromkeys(value.strip().lower() for value in os.getenv("ALERT_RECIPIENTS", "").split(",") if value.strip()))
     for value in legacy:
         try:
             email = normalize_recipient_email(value)
