@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 import os, json
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -147,9 +148,17 @@ def _send_resend_email(recipients, subject, text):
         },
         method="POST",
     )
-    with urlopen(request, timeout=15) as response:
-        result = json.loads(response.read().decode("utf-8"))
-    return result
+    try:
+        with urlopen(request, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        return result
+    except HTTPError as exc:
+        try:
+            error_data = json.loads(exc.read().decode("utf-8"))
+            reason = error_data.get("message") or error_data.get("name") or "Request rejected"
+        except Exception:
+            reason = "Request rejected"
+        raise RuntimeError(f"Resend API returned HTTP {exc.code}: {reason}") from exc
 
 
 @router.post("/notifications/test")
@@ -162,6 +171,8 @@ def test_email(user: User = Depends(current_user)):
             "NIDS notification test",
             "Your Network Intrusion Detection System email notification settings are working.",
         )
+    except RuntimeError as exc:
+        raise HTTPException(502, f"Email delivery failed: {str(exc)}")
     except Exception as exc:
         raise HTTPException(502, f"Email delivery failed: {type(exc).__name__}")
     return {"sent": True, "recipient": user.email}
