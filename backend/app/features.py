@@ -238,46 +238,68 @@ def delete_email_recipient(recipient_id: int, db: Session = Depends(get_db), use
     db.commit()
     return {"deleted": True, "id": recipient_id}
 
-def _send_resend_email(recipients, subject, text):
-    api_key = os.getenv("RESEND_API_KEY")
-    sender = os.getenv("RESEND_FROM")
-    if not api_key or not sender:
-        raise RuntimeError("Resend is not configured")
-    payload = json.dumps({
-        "from": sender,
-        "to": recipients,
-        "subject": subject,
-        "text": text,
+def _send_gmail_email(recipients, subject, text):
+    client_id = os.getenv("GMAIL_CLIENT_ID")
+    client_secret = os.getenv("GMAIL_CLIENT_SECRET")
+    refresh_token = os.getenv("GMAIL_REFRESH_TOKEN")
+    sender = os.getenv("GMAIL_SENDER")
+    if not all((client_id, client_secret, refresh_token, sender)):
+        raise RuntimeError("Gmail is not configured. Set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, and GMAIL_SENDER in Render.")
+
+    token_payload = json.dumps({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
     }).encode("utf-8")
-    request = Request(
-        "https://api.resend.com/emails",
-        data=payload,
+    token_request = Request(
+        "https://oauth2.googleapis.com/token",
+        data=token_payload,
+        headers={"Content-Type": "application/json", "User-Agent": "NIDS-Backend/1.0"},
+        method="POST",
+    )
+    try:
+        with urlopen(token_request, timeout=20) as response:
+            token_data = json.loads(response.read().decode("utf-8"))
+        access_token = token_data["access_token"]
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"Google token refresh failed (HTTP {exc.code}): {detail}") from exc
+    except (KeyError, ValueError) as exc:
+        raise RuntimeError("Google did not return a usable access token") from exc
+
+    import base64
+    from email.message import EmailMessage
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = ", ".join(recipients)
+    message["Subject"] = subject
+    message.set_content(text)
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
+    gmail_payload = json.dumps({"raw": raw_message}).encode("utf-8")
+    gmail_request = Request(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        data=gmail_payload,
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
             "User-Agent": "NIDS-Backend/1.0",
         },
         method="POST",
     )
     try:
-        with urlopen(request, timeout=15) as response:
-            result = json.loads(response.read().decode("utf-8"))
-        return result
+        with urlopen(gmail_request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        raw_body = exc.read().decode("utf-8", errors="replace")
-        try:
-            error_data = json.loads(raw_body)
-            reason = error_data.get("message") or error_data.get("name") or raw_body[:300]
-        except Exception:
-            reason = raw_body[:300] or "Empty error response"
-        raise RuntimeError(f"Resend API returned HTTP {exc.code}: {reason}") from exc
+        detail = exc.read().decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"Gmail API returned HTTP {exc.code}: {detail}") from exc
 
 
 @router.post("/notifications/test")
 def test_email(db: Session = Depends(get_db), user: User = Depends(current_user)):
     admin(user)
-    if not os.getenv("RESEND_API_KEY") or not os.getenv("RESEND_FROM"):
-        raise HTTPException(503, "Email is not configured. Set RESEND_API_KEY and RESEND_FROM in Render.")
+    if not all(os.getenv(key) for key in ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_SENDER")):
+        raise HTTPException(503, "Gmail is not configured. Set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, and GMAIL_SENDER in Render.")
     ensure_legacy_recipients(db)
     recipients = [
         row.email
@@ -286,7 +308,7 @@ def test_email(db: Session = Depends(get_db), user: User = Depends(current_user)
     if not recipients:
         raise HTTPException(400, "No active email recipients are configured. Add and enable at least one recipient first.")
     try:
-        result = _send_resend_email(
+        result = _send_gmail_email(
             recipients,
             "NIDS notification test",
             "This is a test message to confirm that this address receives NIDS security alert notifications.",
@@ -295,7 +317,7 @@ def test_email(db: Session = Depends(get_db), user: User = Depends(current_user)
         raise HTTPException(502, f"Email delivery failed: {str(exc)}")
     except Exception as exc:
         raise HTTPException(502, f"Email delivery failed: {type(exc).__name__}")
-    return {"sent": True, "recipients": recipients, "count": len(recipients), "resend": result}
+    return {"sent": True, "recipients": recipients, "count": len(recipients), "provider": "gmail", "gmail": result}
 
 @router.get("/reports/alerts.pdf")
 def pdf_report(db: Session = Depends(get_db), user: User = Depends(current_user)):
