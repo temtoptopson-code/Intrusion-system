@@ -1,0 +1,2 @@
+# Authorized Scapy sensor
+Install with `pip install -r requirements.txt`. Set `NIDS_API_URL`, `NIDS_SENSOR_TOKEN`, and `NIDS_INTERFACE`, then run `sudo -E python sensor.py` on Linux. On Windows, install Npcap and run an elevated terminal. This sensor submits packet metadata only. Configure TLS and unique per-sensor tokens before remote use. Monitor only networks for which you have explicit authorization.
