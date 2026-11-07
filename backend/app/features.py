@@ -274,20 +274,28 @@ def _send_resend_email(recipients, subject, text):
 
 
 @router.post("/notifications/test")
-def test_email(user: User = Depends(current_user)):
+def test_email(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    admin(user)
     if not os.getenv("RESEND_API_KEY") or not os.getenv("RESEND_FROM"):
         raise HTTPException(503, "Email is not configured. Set RESEND_API_KEY and RESEND_FROM in Render.")
+    ensure_legacy_recipients(db)
+    recipients = [
+        row.email
+        for row in db.scalars(select(EmailRecipient).where(EmailRecipient.is_active.is_(True))).all()
+    ]
+    if not recipients:
+        raise HTTPException(400, "No active email recipients are configured. Add and enable at least one recipient first.")
     try:
-        _send_resend_email(
-            [user.email],
+        result = _send_resend_email(
+            recipients,
             "NIDS notification test",
-            "Your Network Intrusion Detection System email notification settings are working.",
+            "This is a test message to confirm that this address receives NIDS security alert notifications.",
         )
     except RuntimeError as exc:
         raise HTTPException(502, f"Email delivery failed: {str(exc)}")
     except Exception as exc:
         raise HTTPException(502, f"Email delivery failed: {type(exc).__name__}")
-    return {"sent": True, "recipient": user.email}
+    return {"sent": True, "recipients": recipients, "count": len(recipients), "resend": result}
 
 @router.get("/reports/alerts.pdf")
 def pdf_report(db: Session = Depends(get_db), user: User = Depends(current_user)):
