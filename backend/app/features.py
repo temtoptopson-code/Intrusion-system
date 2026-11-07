@@ -355,7 +355,7 @@ def notify_security_alert(alert, db: Session):
         ]
         if not recipients:
             return
-        _send_resend_email(
+        _send_gmail_email(
             recipients,
             f"NIDS {alert.severity} alert: {alert.attack_type}",
             f"{alert.title}\nSeverity: {alert.severity}\nSource IP: {alert.source_ip}\nDestination IP: {alert.destination_ip}\nDetails: {alert.description}\nAutomated heuristic detection notification.",
