@@ -12,9 +12,11 @@ from .security import hash_password,verify_password,token_for,current_user
 from .detection import process_event
 from .simulator import run_scenario
 from .config import CORS_ORIGINS,SENSOR_TOKEN,TIMEZONE,ADMIN_EMAIL,ADMIN_PASSWORD,ADMIN_NAME,JWT_SECRET
+from .features import router as features_router
 from pydantic import BaseModel,Field
 from jose import jwt,JWTError
-app=FastAPI(title="Cloud-Based Network Intrusion Detection System",version="1.0.0")
+app=FastAPI(title="Cloud-Based Network Intrusion Detection System",version="1.1.0")
+app.include_router(features_router)
 app.add_middleware(CORSMiddleware,allow_origins=CORS_ORIGINS,allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 sockets=[]
 class LoginIn(BaseModel): email:str; password:str
@@ -109,25 +111,18 @@ def csv_report(db:Session=Depends(get_db),u:User=Depends(current_user)):
     out.seek(0);return StreamingResponse(iter([out.getvalue()]),media_type="text/csv",headers={"Content-Disposition":"attachment; filename=nids-alert-report.csv"})
 @app.websocket("/ws/events")
 async def ws_events(ws:WebSocket):
-    # Browser WebSocket APIs cannot attach arbitrary Authorization headers.
-    # Authenticate with a short-lived JWT sent as the first WebSocket message.
     await ws.accept()
     db=SessionLocal()
     try:
         token=await ws.receive_text()
         try:
-            payload=jwt.decode(token,JWT_SECRET,algorithms=["HS256"])
-            uid=int(payload["sub"])
-            if not db.get(User,uid):
-                raise ValueError("unknown user")
+            payload=jwt.decode(token,JWT_SECRET,algorithms=["HS256"]);uid=int(payload["sub"])
+            if not db.get(User,uid):raise ValueError("unknown user")
         except (JWTError,ValueError,KeyError,TypeError):
-            await ws.close(code=1008)
-            return
+            await ws.close(code=1008);return
         sockets.append(ws)
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        pass
+        while True:await ws.receive_text()
+    except WebSocketDisconnect:pass
     finally:
         if ws in sockets:sockets.remove(ws)
         db.close()
