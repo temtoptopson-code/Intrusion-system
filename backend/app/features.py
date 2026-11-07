@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from io import BytesIO
-import os, json
+import os, json, re
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +31,26 @@ class DetectionRule(Base):
     threshold: Mapped[int] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     description: Mapped[str] = mapped_column(Text, default="")
+
+class EmailRecipient(Base):
+    __tablename__ = "email_recipients"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+
+class RecipientCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+class RecipientUpdate(BaseModel):
+    email: str | None = Field(default=None, min_length=3, max_length=254)
+    is_active: bool | None = None
 
 class UserIn(BaseModel):
     email: str
@@ -128,6 +148,96 @@ def audit_logs(limit: int = 200, db: Session = Depends(get_db), user: User = Dep
     rows = db.scalars(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(min(max(limit, 1), 500))).all()
     return [dict(id=x.id, timestamp=x.timestamp.isoformat(), actor=x.actor, action=x.action, detail=x.detail) for x in rows]
 
+def normalize_recipient_email(value: str) -> str:
+    email = value.strip().lower()
+    if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(400, "Enter a valid email address")
+    return email
+
+def ensure_legacy_recipients(db: Session):
+    # Import the former Render ALERT_RECIPIENTS list once so existing notification
+    # destinations become manageable in the dashboard without being re-added later.
+    marker = db.get(AppSetting, "legacy_alert_recipients_imported")
+    if marker:
+        return
+    legacy = [value.strip() for value in os.getenv("ALERT_RECIPIENTS", "").split(",") if value.strip()]
+    for value in legacy:
+        try:
+            email = normalize_recipient_email(value)
+        except HTTPException:
+            continue
+        if not db.scalar(select(EmailRecipient).where(EmailRecipient.email == email)):
+            db.add(EmailRecipient(email=email, is_active=True))
+    db.add(AppSetting(key="legacy_alert_recipients_imported", value="true"))
+    db.commit()
+
+def recipient_json(row: EmailRecipient):
+    return {
+        "id": row.id,
+        "email": row.email,
+        "is_active": row.is_active,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+@router.get("/admin/email-recipients")
+def list_email_recipients(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    admin(user)
+    ensure_legacy_recipients(db)
+    rows = db.scalars(select(EmailRecipient).order_by(EmailRecipient.created_at.desc())).all()
+    return [recipient_json(row) for row in rows]
+
+@router.post("/admin/email-recipients")
+def add_email_recipient(data: RecipientCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    admin(user)
+    ensure_legacy_recipients(db)
+    email = normalize_recipient_email(data.email)
+    row = db.scalar(select(EmailRecipient).where(EmailRecipient.email == email))
+    if row:
+        if row.is_active:
+            raise HTTPException(409, "This email address is already registered")
+        row.is_active = True
+    else:
+        row = EmailRecipient(email=email, is_active=True)
+        db.add(row)
+    db.add(AuditLog(actor=user.email, action="email_recipient_added", detail=email))
+    db.commit()
+    db.refresh(row)
+    return recipient_json(row)
+
+@router.patch("/admin/email-recipients/{recipient_id}")
+def update_email_recipient(recipient_id: int, data: RecipientUpdate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    admin(user)
+    ensure_legacy_recipients(db)
+    row = db.get(EmailRecipient, recipient_id)
+    if not row:
+        raise HTTPException(404, "Email recipient not found")
+    if data.email is not None:
+        email = normalize_recipient_email(data.email)
+        duplicate = db.scalar(select(EmailRecipient).where(EmailRecipient.email == email, EmailRecipient.id != recipient_id))
+        if duplicate:
+            raise HTTPException(409, "This email address is already registered")
+        row.email = email
+    if data.is_active is not None:
+        row.is_active = data.is_active
+    db.add(AuditLog(actor=user.email, action="email_recipient_updated", detail=f"{row.email}; active={row.is_active}"))
+    db.commit()
+    db.refresh(row)
+    return recipient_json(row)
+
+@router.delete("/admin/email-recipients/{recipient_id}")
+def delete_email_recipient(recipient_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    admin(user)
+    ensure_legacy_recipients(db)
+    row = db.get(EmailRecipient, recipient_id)
+    if not row:
+        raise HTTPException(404, "Email recipient not found")
+    email = row.email
+    db.delete(row)
+    db.add(AuditLog(actor=user.email, action="email_recipient_deleted", detail=email))
+    db.commit()
+    return {"deleted": True, "id": recipient_id}
+
 def _send_resend_email(recipients, subject, text):
     api_key = os.getenv("RESEND_API_KEY")
     sender = os.getenv("RESEND_FROM")
@@ -204,11 +314,17 @@ def extended_analytics(db: Session = Depends(get_db), user: User = Depends(curre
     ports=db.execute(select(TrafficEvent.destination_port,func.count(TrafficEvent.id)).group_by(TrafficEvent.destination_port).order_by(func.count(TrafficEvent.id).desc()).limit(10)).all()
     return {"attack_types":[{"name":x,"count":n} for x,n in attacks],"top_sources":[{"ip":x,"alerts":n} for x,n in sources],"top_ports":[{"port":x,"events":n} for x,n in ports]}
 
-def notify_security_alert(alert):
-    recipients = [item.strip() for item in os.getenv("ALERT_RECIPIENTS", "").split(",") if item.strip()]
-    if not recipients or alert.severity not in ("Critical", "High"):
+def notify_security_alert(alert, db: Session):
+    if alert.severity not in ("Critical", "High"):
         return
     try:
+        ensure_legacy_recipients(db)
+        recipients = [
+            row.email
+            for row in db.scalars(select(EmailRecipient).where(EmailRecipient.is_active.is_(True))).all()
+        ]
+        if not recipients:
+            return
         _send_resend_email(
             recipients,
             f"NIDS {alert.severity} alert: {alert.attack_type}",
