@@ -55,7 +55,10 @@ def health(db:Session=Depends(get_db)):
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
     u=db.scalar(select(User).where(User.email==data.email.lower()))
-    if not u or not verify_password(data.password,u.password_hash):raise HTTPException(401,"Incorrect email or password")
+    if not u or not verify_password(data.password,u.password_hash):
+        db.add(AuditLog(actor=data.email.lower(),action="login_failed",detail="Invalid credentials"));db.commit()
+        raise HTTPException(401,"Incorrect email or password")
+    db.add(AuditLog(actor=u.email,action="login_success",detail="Successful sign-in"));db.commit()
     return {"access_token":token_for(u),"token_type":"bearer","user":{"id":u.id,"email":u.email,"full_name":u.full_name,"role":u.role}}
 @app.get("/api/auth/me")
 def me(u:User=Depends(current_user)):return {"id":u.id,"email":u.email,"full_name":u.full_name,"role":u.role}
@@ -93,6 +96,7 @@ def analytics(db:Session=Depends(get_db),u:User=Depends(current_user)):
     return {"attack_types":[{"name":n,"value":c} for n,c in rows],"severity":[{"name":n,"value":c} for n,c in sev],"recent_traffic":db.scalar(select(func.count(TrafficEvent.id))) or 0}
 @app.post("/api/simulation/{scenario}")
 async def simulate(scenario:str,db:Session=Depends(get_db),u:User=Depends(current_user)):
+    if u.role=="Viewer":raise HTTPException(403,"Viewer accounts cannot run simulations")
     try:r=run_scenario(db,scenario)
     except ValueError as e:raise HTTPException(400,str(e))
     await broadcast({"type":"simulation","data":r})
