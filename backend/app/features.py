@@ -161,3 +161,15 @@ def extended_analytics(db: Session = Depends(get_db), user: User = Depends(curre
     sources=db.execute(select(SecurityAlert.source_ip,func.count(SecurityAlert.id)).group_by(SecurityAlert.source_ip).order_by(func.count(SecurityAlert.id).desc()).limit(10)).all()
     ports=db.execute(select(TrafficEvent.destination_port,func.count(TrafficEvent.id)).group_by(TrafficEvent.destination_port).order_by(func.count(TrafficEvent.id).desc()).limit(10)).all()
     return {"attack_types":[{"name":x,"count":n} for x,n in attacks],"top_sources":[{"ip":x,"alerts":n} for x,n in sources],"top_ports":[{"port":x,"events":n} for x,n in ports]}
+
+def notify_security_alert(alert):
+    host=os.getenv('SMTP_HOST'); sender=os.getenv('SMTP_FROM'); password=os.getenv('SMTP_PASSWORD')
+    recipient=os.getenv('SMTP_ALERT_TO')
+    if not all((host, sender, password, recipient)) or alert.severity not in ('Critical', 'High'): return
+    try:
+        msg=EmailMessage(); msg['Subject']=f'NIDS {alert.severity} alert: {alert.attack_type}'; msg['From']=sender; msg['To']=recipient
+        msg.set_content(f'{alert.title}\nSeverity: {alert.severity}\nSource IP: {alert.source_ip}\nDestination IP: {alert.destination_ip}\nDetails: {alert.description}\nAutomated heuristic detection notification.')
+        with smtplib.SMTP(host,int(os.getenv('SMTP_PORT','587')),timeout=10) as smtp:
+            smtp.starttls(); smtp.login(sender,password); smtp.send_message(msg)
+    except Exception:
+        return  # Email failure must never interrupt alert persistence.
