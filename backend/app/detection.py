@@ -2,7 +2,7 @@ from datetime import datetime,timedelta,timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .models import TrafficEvent,SecurityAlert
-from .features import DetectionRule,IPRule
+from .features import DetectionRule,IPRule,notify_security_alert
 
 def process_event(db:Session,data:dict):
     event=TrafficEvent(**data); db.add(event); db.flush(); alerts=[]
@@ -35,5 +35,7 @@ def process_event(db:Session,data:dict):
     if event.bytes_count>5000000:
         add("Unusually large traffic event","Traffic Anomaly","Medium","One event reported unusually high byte volume.","Compare with baseline and inspect the associated flow.",.70)
     db.commit(); db.refresh(event)
-    for a in alerts: db.refresh(a)
+    for a in alerts:
+        db.refresh(a)
+        notify_security_alert(a)
     return event,alerts
