@@ -45,3 +45,37 @@ This is a functional academic prototype, not a certified commercial IDS. Detecti
 This initial version does **not** contain a trained machine-learning model. Do not claim machine-learning performance or accuracy until a model has been trained and independently evaluated. The project guide describes a reproducible ML extension.
 
 Only monitor networks for which you have explicit authorization. Before public/production use, add TLS-only sensor ingestion, per-sensor credential management and rotation, rate limiting, role-based access control, migrations, backups, monitoring and a security review.
+
+
+## Extended administration and reporting features
+
+The application now includes:
+- Incident investigation with status updates and analyst notes.
+- IP watchlist, blacklist and whitelist records. Blacklist matches create alerts; these records do not directly configure a firewall or block packets.
+- Configurable heuristic detection thresholds for port scans, brute-force patterns and SYN flood indicators.
+- Super Administrator, Security Analyst and Viewer account roles.
+- Audit history for key administrative actions.
+- Extended analytics for top alert sources, attack categories and destination ports.
+- Downloadable PDF and CSV security reports.
+- Database-aware API health checks.
+- Optional SMTP test messages and high/critical alert notifications.
+
+### Optional Render environment variables for email
+
+Configure these as private environment variables on the Render backend service. Do not commit credentials to GitHub.
+
+| Variable | Purpose |
+|---|---|
+| `SMTP_HOST` | SMTP server hostname |
+| `SMTP_PORT` | SMTP port, normally 587 for STARTTLS |
+| `SMTP_FROM` | SMTP sender/login email |
+| `SMTP_PASSWORD` | SMTP app password or SMTP credential |
+| `SMTP_ALERT_TO` | Recipient for automatic High and Critical alert notifications |
+
+Automatic alert emails are sent only when all four SMTP settings and `SMTP_ALERT_TO` are configured. The in-app test button sends a test message to the signed-in user's email address.
+
+### Feature access
+
+User creation, role management, audit-log access and detection-rule changes require a Super Administrator account. The Viewer role is read-only for alert updates. IP blacklist/whitelist changes are also restricted to Super Administrators.
+
+Detection remains heuristic/rule-based. The application does not claim machine-learning accuracy, and the IP lists are application-level records rather than an active firewall integration.
