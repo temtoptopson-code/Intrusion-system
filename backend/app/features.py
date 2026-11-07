@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from io import BytesIO
-import os, smtplib
-from email.message import EmailMessage
+import os, json
+from urllib.request import Request, urlopen
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -127,16 +127,43 @@ def audit_logs(limit: int = 200, db: Session = Depends(get_db), user: User = Dep
     rows = db.scalars(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(min(max(limit, 1), 500))).all()
     return [dict(id=x.id, timestamp=x.timestamp.isoformat(), actor=x.actor, action=x.action, detail=x.detail) for x in rows]
 
+def _send_resend_email(recipients, subject, text):
+    api_key = os.getenv("RESEND_API_KEY")
+    sender = os.getenv("RESEND_FROM")
+    if not api_key or not sender:
+        raise RuntimeError("Resend is not configured")
+    payload = json.dumps({
+        "from": sender,
+        "to": recipients,
+        "subject": subject,
+        "text": text,
+    }).encode("utf-8")
+    request = Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=15) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    return result
+
+
 @router.post("/notifications/test")
 def test_email(user: User = Depends(current_user)):
-    host=os.getenv("SMTP_HOST"); port=int(os.getenv("SMTP_PORT","587")); sender=os.getenv("SMTP_FROM"); password=os.getenv("SMTP_PASSWORD")
-    if not all((host, sender, password)): raise HTTPException(503, "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_FROM and SMTP_PASSWORD in Render.")
-    msg=EmailMessage(); msg["Subject"]="NIDS notification test"; msg["From"]=sender; msg["To"]=user.email
-    msg.set_content("Your Network Intrusion Detection System email notification settings are working.")
+    if not os.getenv("RESEND_API_KEY") or not os.getenv("RESEND_FROM"):
+        raise HTTPException(503, "Email is not configured. Set RESEND_API_KEY and RESEND_FROM in Render.")
     try:
-        with smtplib.SMTP(host,port,timeout=15) as smtp:
-            smtp.starttls(); smtp.login(sender,password); smtp.send_message(msg)
-    except Exception as exc: raise HTTPException(502, f"Email delivery failed: {type(exc).__name__}")
+        _send_resend_email(
+            [user.email],
+            "NIDS notification test",
+            "Your Network Intrusion Detection System email notification settings are working.",
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Email delivery failed: {type(exc).__name__}")
     return {"sent": True, "recipient": user.email}
 
 @router.get("/reports/alerts.pdf")
@@ -165,13 +192,14 @@ def extended_analytics(db: Session = Depends(get_db), user: User = Depends(curre
     return {"attack_types":[{"name":x,"count":n} for x,n in attacks],"top_sources":[{"ip":x,"alerts":n} for x,n in sources],"top_ports":[{"port":x,"events":n} for x,n in ports]}
 
 def notify_security_alert(alert):
-    host=os.getenv('SMTP_HOST'); sender=os.getenv('SMTP_FROM'); password=os.getenv('SMTP_PASSWORD')
-    recipient=os.getenv('SMTP_ALERT_TO')
-    if not all((host, sender, password, recipient)) or alert.severity not in ('Critical', 'High'): return
+    recipients = [item.strip() for item in os.getenv("ALERT_RECIPIENTS", "").split(",") if item.strip()]
+    if not recipients or alert.severity not in ("Critical", "High"):
+        return
     try:
-        msg=EmailMessage(); msg['Subject']=f'NIDS {alert.severity} alert: {alert.attack_type}'; msg['From']=sender; msg['To']=recipient
-        msg.set_content(f'{alert.title}\nSeverity: {alert.severity}\nSource IP: {alert.source_ip}\nDestination IP: {alert.destination_ip}\nDetails: {alert.description}\nAutomated heuristic detection notification.')
-        with smtplib.SMTP(host,int(os.getenv('SMTP_PORT','587')),timeout=10) as smtp:
-            smtp.starttls(); smtp.login(sender,password); smtp.send_message(msg)
+        _send_resend_email(
+            recipients,
+            f"NIDS {alert.severity} alert: {alert.attack_type}",
+            f"{alert.title}\nSeverity: {alert.severity}\nSource IP: {alert.source_ip}\nDestination IP: {alert.destination_ip}\nDetails: {alert.description}\nAutomated heuristic detection notification.",
+        )
     except Exception:
         return  # Email failure must never interrupt alert persistence.
