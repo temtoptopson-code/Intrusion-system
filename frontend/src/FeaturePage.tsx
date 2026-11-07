@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react';
+import {useEffect,useState} from 'react';\nimport type {FormEvent} from 'react';
 import {api} from './api';
 type Props={page:string;notify:(message:string)=>void};
 export default function FeaturePage({page,notify}:Props){
@@ -12,7 +12,7 @@ export default function FeaturePage({page,notify}:Props){
   if(page==='Advanced Analytics')setAnalytics((await api.get('/api/analytics/extended')).data);
  }catch(e:any){setError(e?.response?.data?.detail||'Unable to load this section. Check your permissions and API connection.');}}
  useEffect(()=>{load()},[page]);
- async function addIp(e:React.FormEvent){e.preventDefault();try{await api.post('/api/admin/ip-rules',{ip_address:ip,list_type:kind,reason});setIp('');setReason('');await load();notify('IP rule saved')}catch(e:any){setError(e?.response?.data?.detail||'Could not save IP rule')}}
+ async function addIp(e:FormEvent){e.preventDefault();try{await api.post('/api/admin/ip-rules',{ip_address:ip,list_type:kind,reason});setIp('');setReason('');await load();notify('IP rule saved')}catch(e:any){setError(e?.response?.data?.detail||'Could not save IP rule')}}
  async function saveRule(r:any){try{await api.put('/api/admin/detection-rules/'+r.rule_key,{threshold:Number(r.threshold),enabled:r.enabled});notify('Detection rule updated')}catch(e:any){setError(e?.response?.data?.detail||'Could not update rule')}}
  async function addUser(e:React.FormEvent){e.preventDefault();try{await api.post('/api/admin/users',{email,full_name:name,password,role});setEmail('');setName('');setPassword('');await load();notify('User account created')}catch(e:any){setError(e?.response?.data?.detail||'Could not create user')}}
  async function removeUser(id:number){if(!confirm('Delete this user account?'))return;try{await api.delete('/api/admin/users/'+id);await load();notify('User deleted')}catch(e:any){setError(e?.response?.data?.detail||'Could not delete user')}}
